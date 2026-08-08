@@ -549,11 +549,46 @@ function schedeUsate(){
   var m={},o=[];
   S.sessioni.forEach(function(s){
     var k=keyOf(s);
-    if(!m[k]){m[k]={key:k,tipo:s.tipo,nome:s.nome||s.tipo,n:0};o.push(m[k]);}
-    m[k].n++;m[k].nome=s.nome||s.tipo;
+    if(!m[k]){m[k]={key:k,tipo:s.tipo,nome:s.nome||s.tipo,prog:s.progNome||"",n:0};o.push(m[k]);}
+    m[k].n++;m[k].nome=s.nome||s.tipo;m[k].prog=s.progNome||"";
   });
   o.sort(function(a,b){return ORD.indexOf(a.tipo)-ORD.indexOf(b.tipo)||a.nome.localeCompare(b.nome);});
+  /* se due schede si chiamano uguale ma vengono da programmi diversi, distinguile */
+  var cnt={};
+  o.forEach(function(x){cnt[x.nome]=(cnt[x.nome]||0)+1;});
+  o.forEach(function(x){x.etichetta=(cnt[x.nome]>1&&x.prog)?x.nome+" · "+x.prog:x.nome;});
   return o;
+}
+/* elenco di tutti gli esercizi di forza mai fatti, indipendentemente da scheda e programma */
+function eserciziUsati(){
+  var m={},o=[];
+  S.sessioni.forEach(function(s){
+    s.ex.forEach(function(e){
+      if(e.cardio)return;
+      if(!(e.set||[]).filter(function(x){return x.fatto;}).length)return;
+      var k=e.nome.toLowerCase();
+      if(!m[k]){m[k]={key:k,nome:e.nome,tipo:s.tipo,n:0};o.push(m[k]);}
+      m[k].n++;m[k].tipo=s.tipo;m[k].nome=e.nome;
+    });
+  });
+  o.sort(function(a,b){return b.n-a.n||a.nome.localeCompare(b.nome);});
+  return o;
+}
+function andamentoEs(key){
+  var pts=[],i=0;
+  S.sessioni.forEach(function(s){
+    s.ex.forEach(function(e){
+      if(e.cardio||String(e.nome).toLowerCase()!==key)return;
+      var d=(e.set||[]).filter(function(x){return x.fatto;});
+      if(!d.length)return;
+      var top=d[0];d.forEach(function(x){if(num(x.peso)>num(top.peso))top=x;});
+      i++;
+      pts.push({n:i,v:num(top.peso),data:s.data,
+        det:d.map(function(x){return kg(x.peso)+"×"+x.reps;}).join(", "),
+        dove:(s.nome||s.tipo)+(s.progNome?" · "+s.progNome:"")});
+    });
+  });
+  return pts;
 }
 function andamento(k){
   var ss=sessDiKey(k),mappa={},ordine=[];
@@ -612,7 +647,7 @@ function spark(pts,c){
 }
 
 /* ================= router ================= */
-var V={tab:"scheda",sub:null,arg:null,selKey:null,stoSub:"sessioni",seqIdx:-1,cardCtx:null};
+var V={tab:"scheda",sub:null,arg:null,selKey:null,selEs:null,stoSub:"sessioni",andSub:"scheda",seqIdx:-1,cardCtx:null};
 function go(tab,sub,arg){V.tab=tab;V.sub=sub||null;V.arg=arg||null;window.scrollTo(0,0);render();}
 var TABS=[{k:"programma",l:"Programma",i:I.cal},{k:"scheda",l:"Scheda",i:I.list},
           {k:"workout",l:"Workout",i:I.dumb},{k:"storico",l:"Storico",i:I.hist},{k:"opz",l:"Opzioni",i:I.gear}];
@@ -855,31 +890,39 @@ function vSto(){
     +'<button data-act="sto-and" class="'+(V.stoSub==="and"?"sel":"")+'">Andamento</button></div>';
   if(V.stoSub==="and")return h+vAnd();
   if(!S.sessioni.length)return h+'<div class="empty">'+ic(I.hist)+'<div class="b" style="color:var(--txt)">Ancora niente</div><div class="sm" style="margin-top:6px">Le sessioni che completi finiscono qui.</div></div>';
-  var cnt={};
-  S.sessioni.forEach(function(s){var k=keyOf(s);cnt[k]=(cnt[k]||0)+1;s._n=cnt[k];});
+  var cnt={},pgs={},piuProg=false;
+  S.sessioni.forEach(function(s){var k=keyOf(s);cnt[k]=(cnt[k]||0)+1;s._n=cnt[k];
+    if(s.progNome)pgs[s.progNome]=1;});
+  for(var pk in pgs){if(Object.keys(pgs).length>1)piuProg=true;}
   for(var i=S.sessioni.length-1;i>=0;i--){
     var ss=S.sessioni[i],c=col(ss.tipo);
     h+='<button class="card tipo tight" style="display:block;width:100%;text-align:left;border-color:'+c+'" data-act="sdet" data-id="'+ss.id+'">'
       +'<div class="row"><div class="grow"><div class="row" style="gap:8px">'
       +'<div class="tname" style="color:'+c+';font-size:16px">'+E(ss.nome||ss.tipo)+'</div>'
       +'<div class="xs mut b">#'+ss._n+'</div></div>'
-      +'<div class="sm mut" style="margin-top:2px">'+E(dataIT(ss.data))+'</div></div>'
+      +'<div class="sm mut" style="margin-top:2px">'+E(dataIT(ss.data))+(piuProg&&ss.progNome?' · '+E(ss.progNome):'')+'</div></div>'
       +'<div style="text-align:right"><div class="mono b">'+mmss(ss.durata)+'</div>'
       +'<div class="xs mut">'+nfatte(ss)+(volume(ss)?' · '+kg(Math.round(volume(ss)))+' kg':'')+'</div></div></div></button>';
   }
   return h;
 }
 function vAnd(){
+  if(!S.sessioni.length)return '<div class="empty">'+ic(I.hist)+'<div class="b" style="color:var(--txt)">Nessun dato</div><div class="sm" style="margin-top:6px">Completa almeno un allenamento.</div></div>';
+  var h='<div class="seg" style="margin-bottom:12px">'
+    +'<button data-act="and-scheda" class="'+(V.andSub!=="es"?"sel":"")+'">Per scheda</button>'
+    +'<button data-act="and-es" class="'+(V.andSub==="es"?"sel":"")+'">Per esercizio</button></div>';
+  if(V.andSub==="es")return h+vAndEs();
   var sk=schedeUsate();
-  if(!sk.length)return '<div class="empty">'+ic(I.hist)+'<div class="b" style="color:var(--txt)">Nessun dato</div><div class="sm" style="margin-top:6px">Completa almeno un allenamento.</div></div>';
+  if(!sk.length)return h+'<div class="empty" style="padding:24px">'+ic(I.dumb)+'<div class="sm">Nessuna serie completata.</div></div>';
   var keys=sk.map(function(x){return x.key;});
   if(!V.selKey||keys.indexOf(V.selKey)<0)V.selKey=keys[0];
-  var h='<div class="chips">'+sk.map(function(x){
+  h+='<div class="chips">'+sk.map(function(x){
     var c=col(x.tipo),sel=x.key===V.selKey;
-    return '<button data-act="selk" data-id="'+E(x.key)+'" style="'+(sel?'border-color:'+c+';color:'+c+';background:'+c+'1A':'')+'">'+E(x.nome)+'</button>';
+    return '<button data-act="selk" data-id="'+E(x.key)+'" style="'+(sel?'border-color:'+c+';color:'+c+';background:'+c+'1A':'')+'">'+E(x.etichetta)+'</button>';
   }).join("")+'</div>';
   var cur=sk.filter(function(x){return x.key===V.selKey;})[0],c=col(cur.tipo),n=cur.n;
-  h+='<div class="sm mut" style="margin:0 2px 12px">'+n+' session'+(n===1?"e":"i")+' di <b style="color:'+c+'">'+E(cur.nome)+'</b> a confronto, dalla #1 alla #'+n+'.</div>';
+  h+='<div class="sm mut" style="margin:0 2px 12px">'+n+' session'+(n===1?"e":"i")+' di <b style="color:'+c+'">'+E(cur.nome)+'</b>'
+    +(cur.prog?' nel programma <b>'+E(cur.prog)+'</b>':'')+', dalla #1 alla #'+n+'.</div>';
   var lista=andamento(V.selKey);
   if(!lista.length)return h+'<div class="empty" style="padding:24px">'+ic(I.dumb)+'<div class="sm">Nessuna serie completata.</div></div>';
   lista.forEach(function(x,xi){
@@ -892,6 +935,31 @@ function vAnd(){
       +'<div class="vals" data-vals="'+xi+'">'+pts.map(function(p){return '<span>#'+p.n+' <b>'+kg(p.v)+'</b> '+E(u.toLowerCase())+'</span>';}).join("")+'</div>'
       +'<div class="xs mut" data-cap="'+xi+'" style="margin-top:8px">Ultima: '+E(pts[pts.length-1].det||"")+' · '+E(dataBreve(pts[pts.length-1].data))+'</div></div>';
   });
+  return h;
+}
+/* andamento di un singolo esercizio su tutta la storia, anche cambiando programma */
+function vAndEs(){
+  var es=eserciziUsati();
+  if(!es.length)return '<div class="empty" style="padding:24px">'+ic(I.dumb)+'<div class="sm">Nessuna serie con peso registrata.</div></div>';
+  var keys=es.map(function(x){return x.key;});
+  if(!V.selEs||keys.indexOf(V.selEs)<0)V.selEs=keys[0];
+  var h='<div class="chips">'+es.map(function(x){
+    var c=col(x.tipo),sel=x.key===V.selEs;
+    return '<button data-act="sele" data-id="'+E(x.key)+'" style="'+(sel?'border-color:'+c+';color:'+c+';background:'+c+'1A':'')+'">'+E(x.nome)+'</button>';
+  }).join("")+'</div>';
+  var cur=es.filter(function(x){return x.key===V.selEs;})[0],c=col(cur.tipo);
+  var pts=andamentoEs(V.selEs);
+  var progs={},np=0;
+  pts.forEach(function(x){if(!progs[x.dove]){progs[x.dove]=1;np++;}});
+  h+='<div class="sm mut" style="margin:0 2px 12px">Tutte le volte che hai fatto <b style="color:'+c+'">'+E(cur.nome)+'</b>, in qualsiasi scheda e programma'+(np>1?' ('+np+' diversi)':'')+'.</div>';
+  if(!pts.length)return h+'<div class="empty" style="padding:24px">'+ic(I.dumb)+'<div class="sm">Nessun dato.</div></div>';
+  var d=pts[pts.length-1].v-pts[0].v,cls=d>0?"up":(d<0?"dn":"eq");
+  h+='<div class="card"><div class="row"><div class="grow"><div class="b" style="font-size:15.5px">'+E(cur.nome)+'</div>'
+    +'<div class="xs mut" style="margin-top:2px">'+pts.length+' sessioni · peso della serie più pesante</div></div>'
+    +(pts.length>1?'<div class="delta '+cls+' nw">'+(d>0?"+":"")+kg(d)+' kg</div>':'')+'</div>'
+    +spark(pts,c)
+    +'<div class="vals" data-vals="0">'+pts.map(function(x){return '<span>#'+x.n+' <b>'+kg(x.v)+'</b> kg</span>';}).join("")+'</div>'
+    +'<div class="xs mut" data-cap="0" style="margin-top:8px">Ultima: '+E(pts[pts.length-1].det||"")+' · '+E(dataBreve(pts[pts.length-1].data))+' · '+E(pts[pts.length-1].dove)+'</div></div>';
   return h;
 }
 function vStoDet(){
@@ -943,7 +1011,7 @@ function vOpz(){
     +'<div class="row sm" style="margin-top:6px"><div class="grow mut">Allenamenti salvati</div><div class="b mono">'+S.sessioni.length+'</div></div>'
     +'<div class="row sm" style="margin-top:6px"><div class="grow mut">Salvataggio locale</div><div class="b">'+(STO.ok?"attivo":"non disponibile")+'</div></div></div>';
   return h+'<button class="btn dgr wide" data-act="wipe">Cancella tutti i dati</button>'
-    +'<div class="xs mut" style="text-align:center;margin-top:18px">Palestra · offline · v4.0</div>';
+    +'<div class="xs mut" style="text-align:center;margin-top:18px">Palestra · offline · v4.1</div>';
 }
 
 /* ================= sheet ================= */
@@ -1134,7 +1202,10 @@ document.addEventListener("click",function(ev){
   /* storico */
   if(a==="sto-sessioni"){V.stoSub="sessioni";render();return;}
   if(a==="sto-and"){V.stoSub="and";render();return;}
+  if(a==="and-scheda"){V.andSub="scheda";render();return;}
+  if(a==="and-es"){V.andSub="es";render();return;}
   if(a==="selk"){V.selKey=id;render();return;}
+  if(a==="sele"){V.selEs=id;render();return;}
   if(a==="sdet"){go("storico","det",id);return;}
   if(a==="sback"){go("storico");return;}
   if(a==="sesdel"){if(!confirm("Eliminare questo allenamento?"))return;
