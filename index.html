@@ -96,6 +96,10 @@ h2:first-child{margin-top:2px}
 .day .dl{font-size:9.5px;font-weight:700;color:var(--mut);letter-spacing:.03em}
 .day .dv{font-size:9.5px;font-weight:800;margin-top:3px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 1px}
 .day.today{box-shadow:0 0 0 2px var(--acc)}
+.day.fatto{background:#141C18}
+.day.salt{opacity:.45}
+.day .dk{font-size:10px;font-weight:800;color:var(--ok);margin-top:2px;line-height:1}
+.day.on{background:#16233A}
 
 .exname{font-size:17px;font-weight:700;letter-spacing:-.01em}
 .exnote{font-size:12.5px;color:var(--mut);margin-top:2px;line-height:1.35}
@@ -227,7 +231,47 @@ var SUG=[
 /* ================= stato ================= */
 var DEFCFG={passo:1,autoTimer:true,beep:true,wake:true,tGiallo:90,tVerde:180};
 var S;
-function nuovoProg(nome){return{id:uid(),nome:nome||"Programma 1",giorni:["REST","REST","REST","REST","REST","REST","REST"],schede:[]};}
+/* Un programma e' una ROTAZIONE: una sequenza ciclica di schede (seq) piu' i giorni
+   in cui ti alleni (giorni: 7 booleani lun..dom). Il segnaposto pos avanza solo quando
+   completi un allenamento, cosi' saltare un giorno fa slittare la rotazione. */
+function nuovoProg(nome){return{id:uid(),nome:nome||"Programma 1",
+  giorni:[true,true,true,true,true,false,false],seq:[],pos:0,schede:[]};}
+function lenSeq(p){return (p.seq||[]).length;}
+function posOk(p){var n=lenSeq(p);return n?((p.pos||0)%n+n)%n:0;}
+function schedaSeq(p,k){var n=lenSeq(p);return n?schedaById(p,p.seq[((k%n)+n)%n]):null;}
+function prossima(p){return lenSeq(p)?schedaSeq(p,posOk(p)):null;}
+/* dopo un allenamento la rotazione riparte da subito dopo la scheda svolta */
+function avanza(p,schedaId){
+  var n=lenSeq(p);if(!n)return;
+  var cur=posOk(p);
+  if(p.seq[cur]===schedaId){p.pos=(cur+1)%n;return;}
+  var k=p.seq.indexOf(schedaId);
+  if(k>=0)p.pos=(k+1)%n;
+}
+function inizioSettimana(){var d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d;}
+function sessioneDelGiorno(i){
+  var a=inizioSettimana(),d0=new Date(a);d0.setDate(a.getDate()+i);
+  var d1=new Date(d0);d1.setDate(d0.getDate()+1);
+  for(var k=S.sessioni.length-1;k>=0;k--){
+    var t=new Date(S.sessioni[k].data);
+    if(t>=d0&&t<d1)return S.sessioni[k];
+  }
+  return null;
+}
+/* i 7 giorni della settimana corrente: il fatto per i giorni passati,
+   il previsto (calcolato dalla posizione attuale) per oggi e i prossimi */
+function settimana(p){
+  var oggi=(new Date().getDay()+6)%7,out=[],k=0,i;
+  for(i=0;i<7;i++){
+    var allena=!!(p.giorni&&p.giorni[i]),ss=sessioneDelGiorno(i);
+    if(ss){out.push({allena:allena,fatto:true,nome:ss.nome||ss.tipo,tipo:ss.tipo,oggi:i===oggi});continue;}
+    if(i<oggi){out.push({allena:allena,saltato:allena,oggi:false});continue;}
+    var sc=null;
+    if(allena&&lenSeq(p)){sc=schedaSeq(p,posOk(p)+k);k++;}
+    out.push({allena:allena,nome:sc?nomeScheda(p,sc):null,tipo:sc?sc.tipo:null,oggi:i===oggi});
+  }
+  return out;
+}
 function schedaById(p,id){if(!p)return null;var r=p.schede.filter(function(x){return x.id===id;});return r.length?r[0]:null;}
 /* nome automatico: "PUSH" se unica, "PUSH 1" / "PUSH 2" se ce n'è più d'una */
 function nomeScheda(p,s){
@@ -245,16 +289,17 @@ function seed(){
   var blocchi=[
     ["PUSH",[["Panca piana bilanciere",4,40,"2\" in discesa, fermo al petto"],["Lento avanti manubri",3,12,""],["Croci ai cavi",3,10,""],["French press",3,15,""]]],
     ["PULL",[["Trazioni alla sbarra",4,0,"a corpo libero, elastico se serve"],["Rematore bilanciere",4,35,""],["Lat machine presa stretta",3,45,""],["Curl bilanciere",3,20,""]]],
-    ["LEGS",[["Squat bilanciere",4,50,"sotto il parallelo"],["Pressa 45°",3,120,""],["Stacco rumeno",3,50,""],["Calf in piedi",4,60,""]]],
-    ["PUSH",[["Panca inclinata manubri",4,18,"inclinazione 30°"],["Alzate laterali",4,8,"niente slancio"],["Dips alle parallele",3,0,""],["Push down ai cavi",3,25,""]]]
+    ["LEGS",[["Squat bilanciere",4,50,"sotto il parallelo"],["Pressa 45°",3,120,""],["Stacco rumeno",3,50,""],["Calf in piedi",4,60,""]]]
   ];
   var ids=[];
   blocchi.forEach(function(b){
     var s={id:uid(),tipo:b[0],ex:b[1].map(function(r){return{id:uid(),nome:r[0],serie:r[1],peso:r[2],note:r[3]};})};
     p.schede.push(s);ids.push(s.id);
   });
-  p.giorni=[ids[0],ids[1],"REST",ids[2],ids[3],"REST","REST"];
-  S={version:3,programmi:[p],attivoId:p.id,sessioni:[],attiva:null,cfg:JSON.parse(JSON.stringify(DEFCFG))};
+  p.seq=[ids[0],ids[1],ids[2]];               /* PUSH → PULL → LEGS */
+  p.giorni=[true,true,true,true,true,false,false];  /* lun-ven */
+  p.pos=0;
+  S={version:4,programmi:[p],attivoId:p.id,sessioni:[],attiva:null,cfg:JSON.parse(JSON.stringify(DEFCFG))};
 }
 function migra(){
   /* v2: giorni conteneva il TIPO; v3: contiene l'id della scheda */
@@ -274,7 +319,18 @@ function migra(){
   });
   S.sessioni.forEach(function(ss){ if(!ss.nome)ss.nome=ss.tipo; });
   S.version=3;
-  try{STO.set(KEY,JSON.stringify(S));}catch(e){}
+}
+/* v3: giorni era un elenco di schede per lun..dom. v4: rotazione (seq) + giorni buoni.
+   La vecchia settimana diventa la sequenza, nell'ordine in cui era scritta. */
+function migra4(){
+  S.programmi.forEach(function(p){
+    var vecchi=p.giorni||[],seq=[],gg=[false,false,false,false,false,false,false];
+    vecchi.forEach(function(g,i){
+      if(g&&g!=="REST"&&schedaById(p,g)){seq.push(g);gg[i]=true;}
+    });
+    p.seq=seq;p.giorni=gg;p.pos=0;
+  });
+  S.version=4;
 }
 /* un allenamento lasciato a metà con il vecchio schema (una casella peso per serie)
    viene convertito in gruppi, senza perdere le ripetizioni già scritte */
@@ -300,7 +356,17 @@ function load(){
   for(var k in DEFCFG){if(S.cfg[k]===undefined)S.cfg[k]=DEFCFG[k];}
   if(!S.sessioni)S.sessioni=[];
   if(!S.attivoId||!S.programmi.filter(function(p){return p.id===S.attivoId;}).length)S.attivoId=S.programmi[0].id;
-  if(S.version!==3)migra();
+  if(S.version!==4){
+    if(S.version!==3)migra();
+    migra4();
+    try{STO.set(KEY,JSON.stringify(S));}catch(e){}
+  }
+  S.programmi.forEach(function(p){
+    if(!p.seq)p.seq=[];
+    if(!p.giorni||p.giorni.length!==7||typeof p.giorni[0]!=="boolean")
+      p.giorni=[true,true,true,true,true,false,false];
+    if(typeof p.pos!=="number")p.pos=0;
+  });
   migraAttiva();
 }
 var svTO=null;
@@ -546,7 +612,7 @@ function spark(pts,c){
 }
 
 /* ================= router ================= */
-var V={tab:"scheda",sub:null,arg:null,selKey:null,stoSub:"sessioni",dayIdx:0,cardCtx:null};
+var V={tab:"scheda",sub:null,arg:null,selKey:null,stoSub:"sessioni",seqIdx:-1,cardCtx:null};
 function go(tab,sub,arg){V.tab=tab;V.sub=sub||null;V.arg=arg||null;window.scrollTo(0,0);render();}
 var TABS=[{k:"programma",l:"Programma",i:I.cal},{k:"scheda",l:"Scheda",i:I.list},
           {k:"workout",l:"Workout",i:I.dumb},{k:"storico",l:"Storico",i:I.hist},{k:"opz",l:"Opzioni",i:I.gear}];
@@ -568,27 +634,55 @@ function render(){
 }
 
 /* ================= programma ================= */
-function weekHTML(p,tappable){
-  var oggi=(new Date().getDay()+6)%7;
-  return '<div class="week">'+p.giorni.map(function(gid,i){
-    var s=gid==="REST"?null:schedaById(p,gid);
-    var c=s?col(s.tipo):REST.c,lab=s?nomeScheda(p,s):"—";
-    var tg=tappable?"button":"div";
-    return '<'+tg+' class="day'+(i===oggi?" today":"")+'" style="border-color:'+(s?c:"var(--line)")+'"'
-      +(tappable?' data-act="day" data-i="'+i+'"':'')+'>'
-      +'<div class="dl">'+GG[i]+'</div><div class="dv" style="color:'+(s?c:"var(--mut)")+'">'+E(lab)+'</div></'+tg+'>';
+function weekHTML(p){
+  return '<div class="week">'+settimana(p).map(function(d,i){
+    var c=d.tipo?col(d.tipo):REST.c,lab=d.nome||"—";
+    var cls="day"+(d.oggi?" today":"")+(d.fatto?" fatto":"")+(d.saltato?" salt":"");
+    return '<div class="'+cls+'" style="border-color:'+(d.nome?c:"var(--line)")+'">'
+      +'<div class="dl">'+GG[i]+'</div>'
+      +'<div class="dv" style="color:'+(d.nome?c:"var(--mut)")+'">'+E(lab)+'</div>'
+      +(d.fatto?'<div class="dk">✓</div>':'')+'</div>';
   }).join("")+'</div>';
+}
+function giorniHTML(p){
+  return '<div class="week">'+GG.map(function(g,i){
+    var on=!!p.giorni[i];
+    return '<button class="day'+(on?" on":"")+'" data-act="gday" data-i="'+i+'" style="border-color:'
+      +(on?"var(--acc)":"var(--line)")+'"><div class="dl" style="color:'+(on?"var(--acc)":"var(--mut)")+'">'+g+'</div>'
+      +'<div class="dv" style="color:'+(on?"var(--txt)":"var(--mut)")+'">'+(on?"sì":"—")+'</div></button>';
+  }).join("")+'</div>';
+}
+function seqHTML(p){
+  if(!lenSeq(p))return '<div class="sm mut" style="margin:2px">Nessun passo: aggiungi le schede nell\'ordine in cui le fai.</div>';
+  var pos=posOk(p);
+  return p.seq.map(function(id,i){
+    var s=schedaById(p,id);if(!s)return"";
+    var c=col(s.tipo);
+    return '<div class="card tipo tight" style="border-color:'+c+(i===pos?';box-shadow:0 0 0 2px '+c+'44':'')+'"><div class="row">'
+      +'<div class="xs mut b" style="width:18px">'+(i+1)+'</div>'
+      +'<button class="grow" style="text-align:left" data-act="seqchg" data-i="'+i+'">'
+      +'<div class="tname" style="color:'+c+';font-size:16px">'+E(nomeScheda(p,s))+'</div>'
+      +(i===pos?'<div class="xs mut" style="margin-top:2px">tocca a questa</div>':'')+'</button>'
+      +'<button class="icobtn" data-act="squp" data-i="'+i+'"'+(i===0?' disabled style="opacity:.35"':'')+'>'+ic(I.up)+'</button>'
+      +'<button class="icobtn" data-act="sqdn" data-i="'+i+'"'+(i===p.seq.length-1?' disabled style="opacity:.35"':'')+'>'+ic(I.down)+'</button>'
+      +'<button class="icobtn dgr" data-act="sqdel" data-i="'+i+'">'+ic(I.trash)+'</button>'
+      +'</div></div>';
+  }).join("");
 }
 function vProg(){
   var h="";
   if(!STO.ok)h+='<div class="warnbar">Questo browser non salva i dati in locale: apri l\'app in Safari, non in navigazione privata.</div>';
-  h+='<div class="sm mut" style="margin:0 2px 12px">Il programma decide quali schede vedi. Puoi mettere lo stesso tipo più volte nella settimana: diventano PUSH 1, PUSH 2 e così via.</div>';
+  h+='<div class="sm mut" style="margin:0 2px 12px">Il programma è una rotazione: le schede si ripetono in ordine nei giorni che scegli. Se la sequenza non chiude in sette giorni, slitta da sola — la settimana dopo parti da dove eri arrivato.</div>';
   S.programmi.forEach(function(p){
-    var att=p.id===S.attivoId;
+    var att=p.id===S.attivoId,pr=prossima(p);
     h+='<div class="card"'+(att?' style="border-color:var(--acc)"':'')+'>'
-      +'<div class="row" style="margin-bottom:11px"><div class="grow"><div class="b" style="font-size:17px">'+E(p.nome)+'</div>'
+      +'<div class="row" style="margin-bottom:9px"><div class="grow"><div class="b" style="font-size:17px">'+E(p.nome)+'</div>'
       +'<div class="xs mut" style="margin-top:2px">'+(att?"attivo":"non attivo")+' · '+p.schede.length+' schede</div></div>'
-      +'<button class="icobtn" data-act="pedit" data-id="'+p.id+'">'+ic(I.edit)+'</button></div>'+weekHTML(p,false);
+      +'<button class="icobtn" data-act="pedit" data-id="'+p.id+'">'+ic(I.edit)+'</button></div>';
+    if(lenSeq(p))h+='<div class="sm mut ell" style="margin-bottom:11px">'
+      +p.seq.map(function(id){var s=schedaById(p,id);return s?'<b style="color:'+col(s.tipo)+'">'+E(nomeScheda(p,s))+'</b>':"";}).join(" → ")+'</div>';
+    h+=weekHTML(p);
+    if(att&&pr)h+='<div class="sm mut" style="margin-top:11px">Prossima: <b style="color:'+col(pr.tipo)+'">'+E(nomeScheda(p,pr))+'</b></div>';
     if(!att)h+='<button class="btn wide" data-act="patt" data-id="'+p.id+'" style="margin-top:12px">Rendi attivo</button>';
     h+='</div>';
   });
@@ -599,16 +693,20 @@ function vProgEdit(){
   if(!p){go("programma");return"";}
   var h='<div class="card"><div class="fld"><label>Nome programma</label>'
     +'<input class="l" value="'+E(p.nome)+'" data-pf="nome"></div></div>';
-  h+='<h2>Settimana</h2><div class="card"><div class="sm mut" style="margin-bottom:11px">Tocca un giorno per assegnargli una scheda esistente, crearne una nuova o mettere riposo.</div>'
-    +weekHTML(p,true)+'</div>';
+  h+='<h2>Giorni in cui ti alleni</h2><div class="card">'+giorniHTML(p)
+    +'<div class="sm mut" style="margin-top:11px">'+p.giorni.filter(Boolean).length+' allenamenti a settimana.</div></div>';
+  h+='<h2>Rotazione</h2><div class="sm mut" style="margin:-4px 2px 10px">Le schede si ripetono in questo ordine, all\'infinito. Non deve chiudere in una settimana: se hai tre schede su cinque giorni, la sequenza slitta e il ciclo si chiude in tre settimane.</div>';
+  h+=seqHTML(p);
+  h+='<button class="btn wide" data-act="sqadd" style="margin-top:2px">'+ic(I.plus)+'Aggiungi passo</button>';
+  if(lenSeq(p))h+='<button class="btn wide" data-act="sqreset" style="margin-top:10px">Riparti dal primo passo</button>';
   h+='<h2>Schede del programma</h2>';
-  if(!p.schede.length)h+='<div class="sm mut" style="margin:0 2px 12px">Nessuna scheda: creane una dai giorni o dal pulsante qui sotto.</div>';
+  if(!p.schede.length)h+='<div class="sm mut" style="margin:0 2px 12px">Nessuna scheda: creane una dalla rotazione o dal pulsante qui sotto.</div>';
   p.schede.forEach(function(s){
-    var c=col(s.tipo),gg=p.giorni.map(function(g,i){return g===s.id?GG[i]:null;}).filter(Boolean);
+    var c=col(s.tipo),n=(p.seq||[]).filter(function(x){return x===s.id;}).length;
     h+='<div class="card tipo tight" style="border-color:'+c+'"><div class="row">'
       +'<div class="grow"><div class="tname" style="color:'+c+'">'+E(nomeScheda(p,s))+'</div>'
       +'<div class="xs mut" style="margin-top:2px">'+s.ex.length+(isCardio(s.tipo)?" attività":" esercizi")
-      +(gg.length?' · '+gg.join(", "):' · nessun giorno')+'</div></div>'
+      +' · '+(n?n+(n===1?" passo":" passi")+" nella rotazione":"fuori rotazione")+'</div></div>'
       +'<button class="icobtn" data-act="sedit" data-id="'+s.id+'">'+ic(I.edit)+'</button>'
       +'<button class="icobtn dgr" data-act="sdelete" data-id="'+s.id+'">'+ic(I.trash)+'</button></div></div>';
   });
@@ -626,7 +724,7 @@ function vSchede(){
     +'<div class="xs mut b" style="text-transform:uppercase;letter-spacing:.06em">Programma attivo</div>'
     +'<div class="b" style="font-size:16px;margin-top:2px">'+E(p.nome)+'</div></div>'
     +'<button class="btn s" data-act="goprog">Cambia</button></div>'
-    +'<div style="margin-top:11px">'+weekHTML(p,false)+'</div></div>';
+    +'<div style="margin-top:11px">'+weekHTML(p)+'</div></div>';
   if(!p.schede.length)
     h+='<div class="empty">'+ic(I.list)+'<div class="b" style="color:var(--txt)">Nessuna scheda</div><div class="sm" style="margin-top:6px">Aggiungine una qui sotto.</div></div>';
   p.schede.forEach(function(s){
@@ -677,15 +775,20 @@ function vSchedaEdit(){
 
 /* ================= workout ================= */
 function vStart(){
-  var p=prog(),oggi=(new Date().getDay()+6)%7,gid=p.giorni[oggi],so=gid==="REST"?null:schedaById(p,gid);
-  var h='<div class="card tight" style="margin-bottom:16px"><div class="xs mut b" style="text-transform:uppercase;letter-spacing:.06em">Oggi · '+GG[oggi]+'</div>'
-    +'<div class="b" style="font-size:17px;margin-top:3px;color:'+(so?col(so.tipo):"var(--mut)")+'">'+(so?E(nomeScheda(p,so)):"Riposo")+'</div></div>';
+  var p=prog(),oggi=(new Date().getDay()+6)%7,so=prossima(p),fatto=sessioneDelGiorno(oggi);
+  var giornoBuono=!!p.giorni[oggi];
+  var h='<div class="card tight" style="margin-bottom:14px"><div class="xs mut b" style="text-transform:uppercase;letter-spacing:.06em">Oggi · '+GG[oggi]+'</div>';
+  if(fatto)h+='<div class="b" style="font-size:17px;margin-top:3px;color:'+col(fatto.tipo)+'">'+E(fatto.nome||fatto.tipo)+' <span class="mut" style="font-size:14px">· già fatto</span></div>';
+  else if(so)h+='<div class="b" style="font-size:17px;margin-top:3px;color:'+col(so.tipo)+'">Tocca a '+E(nomeScheda(p,so))+'</div>'
+    +(giornoBuono?'':'<div class="xs mut" style="margin-top:2px">oggi non è un giorno di allenamento, ma se ti alleni la rotazione avanza lo stesso</div>');
+  else h+='<div class="b" style="font-size:17px;margin-top:3px;color:var(--mut)">Nessuna rotazione impostata</div>';
+  h+='<div style="margin-top:11px">'+weekHTML(p)+'</div></div>';
   if(!p.schede.length)return h+'<div class="empty">'+ic(I.dumb)+'<div class="sm">Nessuna scheda in questo programma.</div></div>';
   p.schede.forEach(function(s){
     var c=col(s.tipo),oggiQ=so&&s.id===so.id;
-    h+='<button class="card tipo" style="display:block;width:100%;text-align:left;border-color:'+c+(oggiQ?';box-shadow:0 0 0 2px '+c+'33':'')+'" data-act="start" data-id="'+s.id+'">'
+    h+='<button class="card tipo" style="display:block;width:100%;text-align:left;border-color:'+c+(oggiQ?';box-shadow:0 0 0 2px '+c+'44':'')+'" data-act="start" data-id="'+s.id+'">'
       +'<div class="row"><div class="grow"><div class="tname" style="color:'+c+'">'+E(nomeScheda(p,s))+'</div>'
-      +'<div class="sm mut" style="margin-top:3px">'+s.ex.length+(isCardio(s.tipo)?" attività":" esercizi")+(oggiQ?" · in programma oggi":"")+'</div></div>'
+      +'<div class="sm mut" style="margin-top:3px">'+s.ex.length+(isCardio(s.tipo)?" attività":" esercizi")+(oggiQ?" · tocca a questa":"")+'</div></div>'
       +'<div class="tag" style="color:'+c+';border-color:'+c+'">INIZIA</div></div></button>';
   });
   return h;
@@ -840,7 +943,7 @@ function vOpz(){
     +'<div class="row sm" style="margin-top:6px"><div class="grow mut">Allenamenti salvati</div><div class="b mono">'+S.sessioni.length+'</div></div>'
     +'<div class="row sm" style="margin-top:6px"><div class="grow mut">Salvataggio locale</div><div class="b">'+(STO.ok?"attivo":"non disponibile")+'</div></div></div>';
   return h+'<button class="btn dgr wide" data-act="wipe">Cancella tutti i dati</button>'
-    +'<div class="xs mut" style="text-align:center;margin-top:18px">Palestra · offline · v3.3</div>';
+    +'<div class="xs mut" style="text-align:center;margin-top:18px">Palestra · offline · v4.0</div>';
 }
 
 /* ================= sheet ================= */
@@ -855,21 +958,18 @@ function rigaTipo(t,act){
   return '<button data-act="'+act+'" data-id="'+t+'" style="border-color:'+c+'">'
     +'<div class="sw2" style="background:'+c+'"></div><div class="nm" style="color:'+c+'">'+t+'</div></button>';
 }
-function pickGiorno(p,i){
-  var h='<div class="b" style="font-size:17px">'+GG[i]+' — cosa fai?</div>';
+function pickPasso(p,titolo){
+  var h='<div class="b" style="font-size:17px">'+E(titolo)+'</div>';
   if(p.schede.length){
-    h+='<div class="sechd">Schede già nel programma</div><div class="pick">'
+    h+='<div class="sechd">Schede del programma</div><div class="pick">'
       +p.schede.map(function(s){
         var c=col(s.tipo);
-        return '<button data-act="daysel" data-id="'+s.id+'" style="border-color:'+c+'">'
+        return '<button data-act="seqsel" data-id="'+s.id+'" style="border-color:'+c+'">'
           +'<div class="sw2" style="background:'+c+'"></div><div class="nm" style="color:'+c+'">'+E(nomeScheda(p,s))+'</div>'
           +'<div class="grow"></div><div class="xs mut nw">'+s.ex.length+(isCardio(s.tipo)?" att.":" es.")+'</div></button>';
       }).join("")+'</div>';
   }
-  h+='<div class="sechd">Crea una nuova scheda</div><div class="pick">'+ORD.map(function(t){return rigaTipo(t,"daynew");}).join("")+'</div>';
-  h+='<div class="sechd">Oppure</div><div class="pick">'
-    +'<button data-act="daysel" data-id="REST" style="border-color:var(--line)"><div class="sw2" style="background:'+REST.c+'"></div>'
-    +'<div class="nm" style="color:var(--mut)">RIPOSO</div></button></div>';
+  h+='<div class="sechd">Crea una nuova scheda</div><div class="pick">'+ORD.map(function(t){return rigaTipo(t,"seqnew");}).join("")+'</div>';
   sheetOpen(h+'<button class="btn wide" data-act="sheetx" style="margin-top:14px">Annulla</button>');
 }
 function pickCardio(){
@@ -911,6 +1011,9 @@ function fineSess(){
       return{exId:e.exId,nome:e.nome,note:e.note,set:daGruppi(e.gruppi||[])};
     })});
   if(S.sessioni.length>400)S.sessioni=S.sessioni.slice(-400);
+  /* la rotazione avanza solo qui: se salti un giorno, il giorno dopo ritrovi la stessa scheda */
+  var pp=S.programmi.filter(function(x){return x.id===a.progId;})[0];
+  if(pp)avanza(pp,a.schedaId);
   S.attiva=null;saveNow();toast("Allenamento salvato");V.stoSub="sessioni";go("storico");
 }
 function dl(name,text,mime){
@@ -947,14 +1050,27 @@ document.addEventListener("click",function(ev){
   if(a==="pedit"){go("programma","edit",id);return;}
   if(a==="patt"){S.attivoId=id;saveNow();toast("Programma attivo cambiato");render();return;}
   if(a==="goprog"){go("programma");return;}
-  if(a==="day"&&PE){V.dayIdx=i;pickGiorno(PE,i);return;}
-  if(a==="daysel"&&PE){PE.giorni[V.dayIdx]=id;saveNow();sheetClose();render();return;}
-  if(a==="daynew"&&PE){var ns=nuovaScheda(PE,id);PE.giorni[V.dayIdx]=ns.id;saveNow();sheetClose();render();return;}
+  if(a==="gday"&&PE){PE.giorni[i]=!PE.giorni[i];saveNow();render();return;}
+  if(a==="sqadd"&&PE){V.seqIdx=-1;pickPasso(PE,"Quale scheda aggiungi in fondo?");return;}
+  if(a==="seqchg"&&PE){V.seqIdx=i;pickPasso(PE,"Sostituisci il passo "+(i+1)+" con…");return;}
+  if(a==="seqsel"&&PE){
+    if(V.seqIdx>=0)PE.seq[V.seqIdx]=id;else PE.seq.push(id);
+    saveNow();sheetClose();render();return;}
+  if(a==="seqnew"&&PE){
+    var ns=nuovaScheda(PE,id);
+    if(V.seqIdx>=0)PE.seq[V.seqIdx]=ns.id;else PE.seq.push(ns.id);
+    saveNow();sheetClose();render();return;}
+  if((a==="squp"||a==="sqdn")&&PE){
+    var t3=a==="squp"?i-1:i+1;if(t3<0||t3>=PE.seq.length)return;
+    var tmp3=PE.seq[i];PE.seq[i]=PE.seq[t3];PE.seq[t3]=tmp3;saveNow();render();return;}
+  if(a==="sqdel"&&PE){PE.seq.splice(i,1);if(PE.pos>=PE.seq.length)PE.pos=0;saveNow();render();return;}
+  if(a==="sqreset"&&PE){PE.pos=0;saveNow();render();toast("Rotazione riportata al primo passo");return;}
   if(a==="pdup"&&PE){
     var cp=JSON.parse(JSON.stringify(PE)),map={};
     cp.id=uid();cp.nome=PE.nome+" (copia)";
     cp.schede.forEach(function(s){var old=s.id;s.id=uid();map[old]=s.id;s.ex.forEach(function(e){e.id=uid();});});
-    cp.giorni=cp.giorni.map(function(g){return map[g]||"REST";});
+    cp.seq=(cp.seq||[]).map(function(g){return map[g];}).filter(Boolean);
+    cp.pos=0;
     S.programmi.push(cp);saveNow();toast("Programma duplicato");go("programma");return;}
   if(a==="pdel"&&PE){if(!confirm('Eliminare "'+PE.nome+'"? Lo storico resta.'))return;
     S.programmi=S.programmi.filter(function(x){return x.id!==PE.id;});
@@ -967,9 +1083,10 @@ document.addEventListener("click",function(ev){
     +'<div class="pick">'+ORD.map(function(t){return rigaTipo(t,"saddsel");}).join("")+'</div>'
     +'<button class="btn wide" data-act="sheetx" style="margin-top:14px">Annulla</button>');return;}
   if(a==="saddsel"){nuovaScheda(host,id);saveNow();sheetClose();render();return;}
-  if(a==="sdelete"&&PE){if(!confirm("Eliminare questa scheda dal programma?"))return;
+  if(a==="sdelete"&&PE){if(!confirm("Eliminare questa scheda? Esce anche dalla rotazione, lo storico resta."))return;
     PE.schede=PE.schede.filter(function(x){return x.id!==id;});
-    PE.giorni=PE.giorni.map(function(g){return g===id?"REST":g;});
+    PE.seq=(PE.seq||[]).filter(function(x){return x!==id;});
+    if(PE.pos>=PE.seq.length)PE.pos=0;
     saveNow();render();return;}
   if(a==="sedit"){go("scheda","edit",id);return;}
   if(a==="sdone"){saveNow();go("scheda");return;}
@@ -1102,6 +1219,7 @@ document.getElementById("fileimp").addEventListener("change",function(ev){
 window.addEventListener("beforeunload",saveNow);
 
 load();
+saveNow();   /* alla primissima apertura fissa subito il programma di partenza */
 if(S.attiva)V.tab="workout";
 render();
 

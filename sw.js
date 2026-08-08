@@ -2,7 +2,7 @@
    Pagina: prima la rete (così un aggiornamento si vede al primo avvio), con la copia
    in cache come rete di sicurezza se sei offline o il segnale è pessimo.
    Icone e manifest: prima la cache, aggiornata in silenzio quando c'è rete. */
-var V = "palestra-v3-3";
+var V = "palestra-v4-0";
 var FILES = ["./", "./index.html", "./manifest.webmanifest",
              "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 var TIMEOUT = 3000;

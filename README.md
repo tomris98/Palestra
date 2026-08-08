@@ -10,6 +10,13 @@ schede, pesi, ripetizioni e storico restano nella memoria locale del dispositivo
 3. Scorri e scegli **Aggiungi a Home**.
 4. Da quel momento la trovi tra le app. Si apre a schermo intero e funziona anche senza rete.
 
+## Come è organizzato
+
+Un **programma** è una *rotazione*: un elenco ordinato di schede che si ripete all'infinito,
+più i giorni della settimana in cui ti alleni. Il segnaposto avanza solo quando completi un
+allenamento, quindi se salti un giorno la rotazione slitta con te invece di perdere un turno.
+Tre schede su cinque giorni chiudono il ciclo in tre settimane, ed è corretto così.
+
 ## Cosa contiene
 
 | File | A cosa serve |
@@ -21,9 +28,10 @@ schede, pesi, ripetizioni e storico restano nella memoria locale del dispositivo
 
 ## Aggiornare l'app
 
-Sostituisci `index.html` con la versione nuova e cambia la costante `V` in cima a `sw.js`
-(es. da `palestra-v3-1` a `palestra-v3-2`): al primo avvio con rete il telefono scarica la
-versione aggiornata e butta via la cache vecchia.
+Sostituisci i file cambiati e alza la costante `V` in cima a `sw.js` (es. da `palestra-v3-2`
+a `palestra-v3-3`). La pagina viene presa dalla rete quando c'è, quindi la versione nuova
+si vede al primo avvio; la cache serve solo da rete di sicurezza offline.
+Se cambia l'icona, togli l'app dalla schermata Home e riaggiungila: iOS tiene l'icona vecchia.
 
 ## Backup
 
